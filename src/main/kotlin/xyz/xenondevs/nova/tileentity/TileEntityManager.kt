@@ -17,6 +17,7 @@ import org.bukkit.event.world.ChunkUnloadEvent
 import org.bukkit.event.world.WorldSaveEvent
 import org.bukkit.inventory.EquipmentSlot
 import org.bukkit.inventory.ItemStack
+import org.jetbrains.exposed.sql.Transaction
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -32,7 +33,7 @@ import xyz.xenondevs.nova.material.NovaMaterial
 import xyz.xenondevs.nova.material.NovaMaterialRegistry
 import xyz.xenondevs.nova.util.*
 import xyz.xenondevs.nova.util.data.localized
-import xyz.xenondevs.nova.world.armorstand.AsyncChunkPos
+import xyz.xenondevs.nova.world.ChunkPos
 import xyz.xenondevs.nova.world.armorstand.pos
 import java.util.*
 import java.util.concurrent.CountDownLatch
@@ -74,15 +75,15 @@ private fun ChunkTask.runAndAwaitCompletion() {
 
 object TileEntityManager : Listener {
     
-    private val tileEntityMap = HashMap<AsyncChunkPos, HashMap<Location, TileEntity>>()
-    private val additionalHitboxMap = HashMap<AsyncChunkPos, HashMap<Location, TileEntity>>()
+    private val tileEntityMap = HashMap<ChunkPos, HashMap<Location, TileEntity>>()
+    private val additionalHitboxMap = HashMap<ChunkPos, HashMap<Location, TileEntity>>()
     private val locationCache = HashSet<Location>()
     val tileEntities: Sequence<TileEntity>
         get() = tileEntityMap.asSequence().flatMap { (_, chunkMap) -> chunkMap.values }
-    val tileEntityChunks: Sequence<AsyncChunkPos>
+    val tileEntityChunks: Sequence<ChunkPos>
         get() = tileEntityMap.keys.asSequence()
     
-    private val chunkTaskQueues = HashMap<AsyncChunkPos, ChunkTaskQueue>()
+    private val chunkTaskQueues = HashMap<ChunkPos, ChunkTaskQueue>()
     
     fun init() {
         LOGGER.info("Initializing TileEntityManager")
@@ -203,7 +204,7 @@ object TileEntityManager : Listener {
     }
     
     @Synchronized
-    fun getTileEntitiesInChunk(chunkPos: AsyncChunkPos) = tileEntityMap[chunkPos]?.values?.toList() ?: emptyList()
+    fun getTileEntitiesInChunk(chunkPos: ChunkPos) = tileEntityMap[chunkPos]?.values?.toList() ?: emptyList()
     
     @Synchronized
     fun addTileEntityHitboxLocations(tileEntity: TileEntity, locations: List<Location>) {
@@ -215,7 +216,7 @@ object TileEntityManager : Listener {
         }
     }
     
-    private fun handleChunkLoad(chunkPos: AsyncChunkPos) {
+    private fun handleChunkLoad(chunkPos: ChunkPos) {
         addToChunkTaskQueue(chunkPos, true) {
             if (chunkPos.isLoaded()) {
                 transaction {
@@ -244,31 +245,33 @@ object TileEntityManager : Listener {
         }
     }
     
-    private fun handleChunkUnload(chunkPos: AsyncChunkPos) {
-        val async = NOVA.isEnabled
-        addToChunkTaskQueue(chunkPos, async) {
-            saveChunk(chunkPos) // saving can be done from a different thread
+    @Synchronized
+    private fun handleChunkUnload(chunkPos: ChunkPos) {
+        if (chunkPos !in tileEntityMap) return
+        
+        val tileEntities = tileEntityMap[chunkPos]!!
+        val tileEntityValues = tileEntities.values
+        
+        addToChunkTaskQueue(chunkPos, false) { latch ->
+            tileEntityMap -= chunkPos
+            additionalHitboxMap -= chunkPos
+            locationCache.removeAll { it.chunkPos == chunkPos }
+            tileEntityValues.forEach { it.handleRemoved(unload = true) }
             
-            val task = { // this should be run in the main thread
-                val tileEntities = tileEntityMap[chunkPos]
-                tileEntityMap -= chunkPos
-                locationCache.removeAll { it.chunkPos == chunkPos }
-                tileEntities?.forEach { (_, tileEntity) -> tileEntity.handleRemoved(unload = true) }
-                
-                it.countDown() // move on in the queue
-            }
-            
-            // switch to the main thread if we're not already in it, otherwise just use synchronized
-            if (async) runTaskSynchronized(this, task)
-            else synchronized(this, task)
+            latch.countDown() // move on in the queue
         }
+        
+        saveChunk(tileEntities.values)
     }
     
     @Synchronized
-    fun saveChunk(chunkPos: AsyncChunkPos) {
-        val tileEntities = tileEntityMap[chunkPos]?.values ?: return
-        
-        transaction {
+    fun saveChunk(chunk: ChunkPos) {
+        if (chunk in tileEntityMap)
+            saveChunk(tileEntityMap[chunk]!!.values)
+    }
+    
+    private fun saveChunk(tileEntities: Iterable<TileEntity>) {
+        val statement: (Transaction.() -> Unit) = {
             tileEntities.forEach { tileEntity ->
                 tileEntity.saveData()
                 
@@ -281,8 +284,8 @@ object TileEntityManager : Listener {
                         it[id] = tileEntity.uuid
                         it[world] = tileEntity.location.world!!.uid
                         it[owner] = tileEntity.ownerUUID
-                        it[chunkX] = chunkPos.x
-                        it[chunkZ] = chunkPos.z
+                        it[chunkX] = tileEntity.chunkPos.x
+                        it[chunkZ] = tileEntity.chunkPos.z
                         it[x] = location.blockX
                         it[y] = location.blockY
                         it[z] = location.blockZ
@@ -297,6 +300,9 @@ object TileEntityManager : Listener {
                 )
             }
         }
+        
+        if (NOVA.isEnabled) asyncTransaction(statement)
+        else transaction(statement = statement)
     }
     
     @EventHandler
@@ -467,7 +473,7 @@ object TileEntityManager : Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun handleBlockExplosion(event: BlockExplodeEvent) = handleExplosion(event.blockList())
     
-    private fun addToChunkTaskQueue(chunkPos: AsyncChunkPos, async: Boolean, task: ChunkTask) {
+    private fun addToChunkTaskQueue(chunkPos: ChunkPos, async: Boolean, task: ChunkTask) {
         synchronized(chunkTaskQueues) {
             val currentQueue = chunkTaskQueues[chunkPos]
             if (currentQueue != null) {
@@ -483,7 +489,7 @@ object TileEntityManager : Listener {
         }
     }
     
-    private class ChunkTaskQueue(private val chunkPos: AsyncChunkPos, initialTask: ChunkTask) {
+    private class ChunkTaskQueue(private val chunkPos: ChunkPos, initialTask: ChunkTask) {
         
         private val queue = LinkedList<ChunkTask>()
         
