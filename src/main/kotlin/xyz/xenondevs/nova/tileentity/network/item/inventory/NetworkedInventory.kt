@@ -8,6 +8,11 @@ import xyz.xenondevs.nova.tileentity.TileInventoryManager
 import xyz.xenondevs.nova.tileentity.network.NetworkException
 import xyz.xenondevs.nova.util.addItemCorrectly
 
+private val UPDATE_REASON = CustomUpdateReason("NetworkedVirtualInventory")
+
+private fun Array<ItemStack?>.deepClone() =
+    Array(size) { get(it)?.clone() }
+
 interface NetworkedInventory {
     
     /**
@@ -16,7 +21,7 @@ interface NetworkedInventory {
     val size: Int
     
     /**
-     * An array of all the [ItemStack]s in this inventory.
+     * A copy of all the [ItemStack]s in this inventory.
      */
     val items: Array<ItemStack?>
     
@@ -40,9 +45,7 @@ interface NetworkedInventory {
     /**
      * Decrements the amount of an [ItemStack] on a [slot] by one.
      */
-    fun decrementByOne(slot: Int) {
-        setItem(slot, getItem(slot)?.apply { amount -= 1 }?.takeUnless { it.amount <= 0 || it.type.isAir })
-    }
+    fun decrementByOne(slot: Int)
     
 }
 
@@ -58,17 +61,17 @@ class NetworkedVirtualInventory(val virtualInventory: VirtualInventory) : Networ
         get() = virtualInventory.items
     
     override fun setItem(slot: Int, item: ItemStack?) {
-        if (!virtualInventory.setItemStack(null, slot, item)) {
-            val uuid = virtualInventory.uuid
-            val tileEntity = TileInventoryManager.getByUuid(uuid)?.first?.let { tileUUID ->
-                TileEntityManager.tileEntities.firstOrNull { tileUUID == it.uuid }
-            }
-            throw NetworkException("The ItemUpdateEvent was cancelled. UUID: ${virtualInventory.uuid}, TileEntity: $tileEntity")
-        }
+        if (!virtualInventory.setItemStack(null, slot, item))
+            throwNetworkException()
     }
     
     override fun addItem(item: ItemStack): Int {
-        return virtualInventory.addItem(CustomUpdateReason("NetworkedVirtualInventory"), item)
+        return virtualInventory.addItem(UPDATE_REASON, item)
+    }
+    
+    override fun decrementByOne(slot: Int) {
+        if (virtualInventory.addItemAmount(UPDATE_REASON, slot, -1) != -1)
+            throwNetworkException()
     }
     
     override fun equals(other: Any?) =
@@ -76,16 +79,24 @@ class NetworkedVirtualInventory(val virtualInventory: VirtualInventory) : Networ
     
     override fun hashCode() = virtualInventory.uuid.hashCode()
     
+    private fun throwNetworkException() {
+        val uuid = virtualInventory.uuid
+        val tileEntity = TileInventoryManager.getByUuid(uuid)?.first?.let { tileUUID ->
+            TileEntityManager.tileEntities.firstOrNull { tileUUID == it.uuid }
+        }
+        throw NetworkException("The ItemUpdateEvent was cancelled. UUID: ${virtualInventory.uuid}, TileEntity: $tileEntity")
+    }
+    
 }
 
 /**
  * A [NetworkedInventory] wrapper for [Inventory]
  */
-class NetworkedBukkitInventory(val inventory: Inventory) : NetworkedInventory {
+open class NetworkedBukkitInventory(val inventory: Inventory) : NetworkedInventory {
     
     override val size = inventory.size
     override val items: Array<ItemStack?>
-        get() = inventory.contents
+        get() = inventory.contents.deepClone()
     
     override fun setItem(slot: Int, item: ItemStack?) {
         inventory.setItem(slot, item)
@@ -95,10 +106,30 @@ class NetworkedBukkitInventory(val inventory: Inventory) : NetworkedInventory {
         return inventory.addItemCorrectly(item)
     }
     
+    override fun decrementByOne(slot: Int) {
+        val item = inventory.getItem(slot)
+        if (item != null) item.amount -= 1
+    }
+    
     override fun equals(other: Any?) =
         if (other is NetworkedBukkitInventory) other.inventory == inventory else false
     
-    override fun hashCode() = inventory.hashCode()
+    override fun hashCode() =
+        inventory.hashCode()
+    
+}
+
+/**
+ * A [NetworkedInventory] specifically for chests. This implementation compares the inventory location
+ * instead of the inventories themselves, so double chest inventories are seen as the same inventory.
+ */
+class NetworkedChestInventory(inventory: Inventory) : NetworkedBukkitInventory(inventory) {
+    
+    override fun equals(other: Any?) =
+        other is NetworkedChestInventory && other.inventory.location == inventory.location
+    
+    override fun hashCode() =
+        inventory.location.hashCode()
     
 }
 
@@ -116,10 +147,15 @@ class NetworkedRangedBukkitInventory(
     override val size = slots.size
     
     override val items: Array<ItemStack?>
-        get() = inventory.contents.takeIndices(slots)
+        get() = inventory.contents.takeIndices(slots).deepClone()
     
     override fun setItem(slot: Int, item: ItemStack?) {
         inventory.setItem(slots[slot], item)
+    }
+    
+    override fun decrementByOne(slot: Int) {
+        val item = inventory.getItem(slots[slot])
+        if (item != null) item.amount -= 1
     }
     
     override fun addItem(item: ItemStack): Int {

@@ -34,7 +34,7 @@ import xyz.xenondevs.nova.material.NovaMaterialRegistry
 import xyz.xenondevs.nova.util.*
 import xyz.xenondevs.nova.util.data.localized
 import xyz.xenondevs.nova.world.ChunkPos
-import xyz.xenondevs.nova.world.armorstand.pos
+import xyz.xenondevs.nova.world.pos
 import java.util.*
 import java.util.concurrent.CountDownLatch
 import kotlin.math.roundToInt
@@ -220,7 +220,7 @@ object TileEntityManager : Listener {
         addToChunkTaskQueue(chunkPos, true) {
             if (chunkPos.isLoaded()) {
                 transaction {
-                    val tileEntities = DaoTileEntity.find { (TileEntitiesTable.world eq chunkPos.world) and (TileEntitiesTable.chunkX eq chunkPos.x) and (TileEntitiesTable.chunkZ eq chunkPos.z) }
+                    val tileEntities = DaoTileEntity.find { (TileEntitiesTable.world eq chunkPos.worldUUID) and (TileEntitiesTable.chunkX eq chunkPos.x) and (TileEntitiesTable.chunkZ eq chunkPos.z) }
                         .onEach { tile -> tile.inventories.forEach { inventory -> TileInventoryManager.loadInventory(tile.id.value, inventory.id.value, inventory.data) } }
                         .toList()
                     
@@ -250,7 +250,7 @@ object TileEntityManager : Listener {
         if (chunkPos !in tileEntityMap) return
         
         val tileEntities = tileEntityMap[chunkPos]!!
-        val tileEntityValues = tileEntities.values
+        val tileEntityValues = HashSet(tileEntities.values)
         
         addToChunkTaskQueue(chunkPos, false) { latch ->
             tileEntityMap -= chunkPos
@@ -261,13 +261,13 @@ object TileEntityManager : Listener {
             latch.countDown() // move on in the queue
         }
         
-        saveChunk(tileEntities.values)
+        saveChunk(tileEntityValues)
     }
     
     @Synchronized
     fun saveChunk(chunk: ChunkPos) {
         if (chunk in tileEntityMap)
-            saveChunk(tileEntityMap[chunk]!!.values)
+            saveChunk(HashSet(tileEntityMap[chunk]!!.values))
     }
     
     private fun saveChunk(tileEntities: Iterable<TileEntity>) {
@@ -338,6 +338,7 @@ object TileEntityManager : Listener {
                 val placeEvent = BlockPlaceEvent(otherBlock, replacedState, block, event.itemInHand, player, event.canBuild(), event.hand)
                 Bukkit.getPluginManager().callEvent(placeEvent)
                 if (placeEvent.isCancelled) otherBlock.type = Material.AIR
+                else if (player.gameMode != GameMode.CREATIVE) player.inventory.setItem(event.hand, event.itemInHand.apply { amount -= 1 })
             }
             
             return
