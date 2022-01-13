@@ -1,7 +1,7 @@
 {
   "resource_pack": {
     "enabled": true,
-    "url": "https://github.com/xenondevs/NovaRP/releases/download/0.6.11/NovaRP.zip"
+    "url": "https://github.com/xenondevs/NovaRP/releases/download/0.7.2/NovaRP.zip"
   },
   "mysql": {
     "enabled": false,
@@ -19,6 +19,10 @@
   "crafting_cache": {
     "size": 5000
   },
+  "nova_executor": {
+    "enabled": true,
+    "threads": 200
+  },
   "bottled_mob_blacklist": [
     "WITHER",
     "ENDER_DRAGON",
@@ -30,13 +34,10 @@
   "upgrade_modifiers": {
     "speed": [1.0, 1.91, 2.82, 3.73, 4.64, 5.55, 6.46, 7.37, 8.28, 9.19, 10.0],
     "efficiency": [1.0, 1.25, 1.75, 2.75, 3.75, 4.75, 5.75, 6.75, 7.75, 8.75, 9.75],
-    "energy": [1.0, 1.25, 1.75, 2.75, 3.75, 4.75, 5.75, 6.75, 7.75, 8.75, 9.75],
+    "energy": [1.0, 1.9, 2.8, 3.7, 4.6, 5.5, 6.4, 7.3, 8.2, 9.1, 10.0],
+    "fluid": [1.0, 1.9, 2.8, 3.7, 4.6, 5.5, 6.4, 7.3, 8.2, 9.1, 10.0],
     "range": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
   },
-  "loot_frequency": {
-    "star_shards": {
-      "min": 0,
-      "max": 5
-    }
-  }
+  "chunk_reload_watcher": false,
+  "use_metric_prefixes": false
 }

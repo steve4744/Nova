@@ -1,6 +1,6 @@
 package xyz.xenondevs.nova.item.impl
 
-import de.studiocode.invui.item.ItemBuilder
+import de.studiocode.invui.item.builder.ItemBuilder
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.entity.Player
@@ -10,34 +10,34 @@ import xyz.xenondevs.nova.NOVA
 import xyz.xenondevs.nova.item.NovaItem
 import xyz.xenondevs.nova.player.equipment.ArmorEquipEvent
 import xyz.xenondevs.nova.player.equipment.EquipMethod
-import xyz.xenondevs.nova.util.EnergyUtils
+import xyz.xenondevs.nova.util.NumberFormatUtils
 import kotlin.math.roundToInt
 
-private val ENERGY_KEY = NamespacedKey(NOVA, "item_energy")
+private val ENERGY_KEY = NamespacedKey(NOVA, "item_energy64")
 
 abstract class ChargeableItem(
-    val maxEnergy: Int,
+    val maxEnergy: Long,
 ) : NovaItem() {
     
-    fun getEnergy(itemStack: ItemStack) = retrieveData(itemStack, ENERGY_KEY) ?: 0
+    fun getEnergy(itemStack: ItemStack) = retrieveData(itemStack, ENERGY_KEY) ?: 0L
     
-    fun setEnergy(itemStack: ItemStack, energy: Int) {
+    fun setEnergy(itemStack: ItemStack, energy: Long) {
         val coercedEnergy = energy.coerceIn(0, maxEnergy)
         
         storeData(itemStack, ENERGY_KEY, coercedEnergy)
         
         val itemMeta = itemStack.itemMeta!!
-        itemMeta.lore = listOf(EnergyUtils.getEnergyString(coercedEnergy, maxEnergy))
+        itemMeta.lore = listOf(NumberFormatUtils.getEnergyString(coercedEnergy, maxEnergy))
         if (itemMeta is Damageable)
             itemMeta.damage = calculateDamage(itemStack.type, coercedEnergy)
         itemStack.itemMeta = itemMeta
     }
     
-    fun addEnergy(itemStack: ItemStack, energy: Int) {
+    fun addEnergy(itemStack: ItemStack, energy: Long) {
         setEnergy(itemStack, getEnergy(itemStack) + energy)
     }
     
-    private fun calculateDamage(material: Material, energy: Int): Int {
+    private fun calculateDamage(material: Material, energy: Long): Int {
         val percentage = energy.toDouble() / maxEnergy.toDouble()
         val maxDurability = material.maxDurability
         return (maxDurability - (maxDurability * percentage)).roundToInt()
@@ -51,7 +51,7 @@ abstract class ChargeableItem(
     
     override fun getDefaultItemBuilder(itemBuilder: ItemBuilder): ItemBuilder {
         itemBuilder.damage = calculateDamage(itemBuilder.material, 0)
-        itemBuilder.addLoreLines(EnergyUtils.getEnergyString(0, maxEnergy))
+        itemBuilder.addLoreLines(NumberFormatUtils.getEnergyString(0, maxEnergy))
         return itemBuilder
     }
     

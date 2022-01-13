@@ -10,13 +10,15 @@ import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.NamespacedKey
 import org.bukkit.World
-import org.bukkit.craftbukkit.v1_17_R1.CraftServer
-import org.bukkit.craftbukkit.v1_17_R1.CraftWorld
+import org.bukkit.craftbukkit.v1_18_R1.CraftServer
+import org.bukkit.craftbukkit.v1_18_R1.CraftWorld
+import org.bukkit.craftbukkit.v1_18_R1.entity.CraftEntity
 import org.bukkit.entity.ArmorStand
 import org.bukkit.entity.Entity
 import org.bukkit.entity.EntityType
 import org.bukkit.entity.Player
 import org.bukkit.event.entity.CreatureSpawnEvent
+import org.bukkit.inventory.EquipmentSlot
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataContainer
 import xyz.xenondevs.nova.NOVA
@@ -32,9 +34,19 @@ import net.minecraft.world.entity.decoration.ArmorStand as NMSArmorStand
 import net.minecraft.world.item.ItemStack as NMSItemStack
 
 fun Player.awardAdvancement(key: NamespacedKey) {
-    val advancement = Bukkit.getAdvancement(key)!!
-    val progress = getAdvancementProgress(advancement)
-    advancement.criteria.forEach { progress.awardCriteria(it) }
+    val advancement = Bukkit.getAdvancement(key)
+    if (advancement != null) {
+        val progress = getAdvancementProgress(advancement)
+        advancement.criteria.forEach { progress.awardCriteria(it) }
+    }
+}
+
+fun Player.swingHand(hand: EquipmentSlot) {
+    when (hand) {
+        EquipmentSlot.HAND -> swingMainHand()
+        EquipmentSlot.OFF_HAND -> swingOffHand()
+        else -> throw IllegalArgumentException("EquipmentSlot is not a hand")
+    }
 }
 
 fun Entity.teleport(modifyLocation: Location.() -> Unit) {
@@ -54,6 +66,9 @@ fun ArmorStand.setHeadItemSilently(headStack: ItemStack) {
     armorItems[3] = headStack.nmsStack
 }
 
+val Entity.localizedName: String?
+    get() = (this as CraftEntity).handle.type.descriptionId
+
 object EntityUtils {
     
     @Suppress("UNCHECKED_CAST")
@@ -68,16 +83,13 @@ object EntityUtils {
         // create EntityArmorStand
         val nmsArmorStand = createNMSEntity(world, location, EntityType.ARMOR_STAND) as NMSArmorStand
         
-        // set head item silently
-        val armorItems = ReflectionRegistry.ARMOR_STAND_ARMOR_ITEMS_FIELD.get(nmsArmorStand) as NonNullList<NMSItemStack>
-        armorItems[3] = headStack.nmsStack
-        
         // get CraftArmorStand
         val armorStand = nmsArmorStand.bukkitEntity as ArmorStand
         
         // set other properties
         armorStand.isMarker = true
         armorStand.isVisible = false
+        armorStand.equipment?.setHelmet(headStack, true)
         if (light) armorStand.fireTicks = Int.MAX_VALUE
         
         // set data
@@ -153,7 +165,7 @@ object EntityUtils {
         data: ByteArray,
         location: Location,
         nbtModifier: ((CompoundTag) -> CompoundTag)? = null
-    ) {
+    ): net.minecraft.world.entity.Entity {
         // get world
         val world = location.world!!
         val level = world.serverLevel
@@ -171,14 +183,14 @@ object EntityUtils {
         if (nbtModifier != null) compoundTag = nbtModifier.invoke(compoundTag)
         
         // deserialize compound tag to entity
-        NMSEntityType.loadEntityRecursive(compoundTag, level) { entity ->
+        return NMSEntityType.loadEntityRecursive(compoundTag, level) { entity ->
             // assign new uuid
             entity.uuid = UUID.randomUUID()
             
             // add entity to world
             level.addWithUUID(entity)
             entity
-        }
+        }!!
     }
     
     fun createNMSEntity(world: World, location: Location, entityType: EntityType): Any {

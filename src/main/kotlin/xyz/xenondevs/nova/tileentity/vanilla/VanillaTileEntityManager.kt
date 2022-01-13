@@ -17,7 +17,6 @@ import org.bukkit.event.block.BlockPlaceEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.event.world.ChunkLoadEvent
 import org.bukkit.event.world.ChunkUnloadEvent
-import org.bukkit.event.world.WorldSaveEvent
 import xyz.xenondevs.nova.LOGGER
 import xyz.xenondevs.nova.NOVA
 import xyz.xenondevs.nova.integration.protection.ProtectionManager
@@ -122,14 +121,13 @@ object VanillaTileEntityManager : Listener {
         chunkMap.values.forEach(VanillaTileEntity::handleInitialized)
     }
     
-    @Synchronized
     private fun handleChunkUnload(chunk: Chunk) {
-        val tileEntities = tileEntityMap[chunk.pos]
-        tileEntityMap.remove(chunk.pos)
-        tileEntities?.forEach { (location, tileEntity) ->
-            locationCache -= location
-            tileEntity.handleRemoved(unload = true)
-        }
+        // The VanillaTileEntityManager lock should not be hold for VanillaTileEntity#handleRemoved
+        synchronized(this) {
+            val tileEntities = tileEntityMap.remove(chunk.pos)
+            tileEntities?.forEach { (location, _) -> locationCache -= location }
+            return@synchronized tileEntities
+        }?.forEach { (_, tileEntity) -> tileEntity.handleRemoved(true) }
     }
     
     @Synchronized
@@ -146,15 +144,6 @@ object VanillaTileEntityManager : Listener {
     private fun handleBlockBreak(location: Location) {
         if (locationCache.containsKey(location))
             handleTileEntityDestroy(location)
-    }
-    
-    @Synchronized
-    @EventHandler
-    fun handleWorldSave(event: WorldSaveEvent) {
-        tileEntityMap.values.asSequence()
-            .flatMap { it.values }
-            .filterIsInstance<ItemStorageVanillaTileEntity>()
-            .forEach { it.itemHolder.saveData() }
     }
     
     @Synchronized
